@@ -1,0 +1,7 @@
+POSTGRES
+
+
+sudo su - postgres
+createdb aura
+createuser -s -r -P aura
+
