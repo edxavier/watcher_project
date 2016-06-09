@@ -67,7 +67,7 @@ class UrlibHttpHelper(object):
         self.wadrr = addr
         self.wport = port
         handler = get_logger_handler()
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        #logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         self.logger = logging.getLogger(__name__)
         self.logger.addHandler(handler)
 
@@ -81,6 +81,7 @@ class UrlibHttpHelper(object):
             return u
         except Exception, e:
             self.logger.error("No se pudo relizar el post para la url: " + url)
+            return None
 
     def do_get(self, url="/"):
         try:
@@ -90,18 +91,21 @@ class UrlibHttpHelper(object):
             u = urllib.urlopen(wurl)
             return u.read()
         except Exception, e:
+            self.logger.error("No se pudo relizar el get para la url: " + url)
             return None
-            self.logger.error("No se pudo relizar el post para la url: " + url)
 
     def do_put(self, url="/", data=None):
-        opener = urllib2.build_opener(urllib2.HTTPHandler)
-        straddr = self.wadrr
-        strPort = str(self.wport)
-        wurl = 'http://' + straddr + ':' + strPort + url
-        data_dic = urllib.urlencode(data)
-        request = urllib2.Request(wurl, data=data_dic)
-        #request.add_header('Content-Type', 'application/json')
-        request.get_method = lambda: 'PUT'
-        url = opener.open(request)
-        return url
-
+        try:
+            opener = urllib2.build_opener(urllib2.HTTPHandler)
+            straddr = self.wadrr
+            strPort = str(self.wport)
+            wurl = 'http://' + straddr + ':' + strPort + url
+            data_dic = urllib.urlencode(data)
+            request = urllib2.Request(wurl, data=data_dic)
+            #request.add_header('Content-Type', 'application/json')
+            request.get_method = lambda: 'PUT'
+            url = opener.open(request)
+            return url
+        except Exception, e:
+            self.logger.error("No se pudo relizar el PUT para la url: " + url)
+            return None

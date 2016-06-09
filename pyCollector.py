@@ -5,6 +5,8 @@ from helpers.web_helper import UrlibHttpHelper
 from helpers.os_helper import OSHelper
 from helpers.funtions_utils import get_ip_address, compare_files, get_logger_handler, get_pos
 import ConfigParser
+from datetime import datetime
+
 
 from helpers.funtions_utils import clear_multiple_spaces
 #import json
@@ -30,9 +32,19 @@ RSCR_HIST_PERIOD = int(config.get('WATCHER', 'rscr_hist_period'))
 PRESENCE_PERIOD = int(config.get('WATCHER', 'presence_period'))
 FILE_CHANGE_THRESHOLD = int(config.get('WATCHER', 'file_chg_threshold'))
 IFACE = config.get('WATCHER', 'local_iface')
+NTP_SERVER = config.get('WATCHER', 'ntp_server')
+ISVR = config.get('WATCHER', 'is_server')
+SECTOR = config.get('WATCHER', 'sector')
+
+IS_SERVER = False
+
+if(ISVR == "True" ):
+    IS_SERVER = True
+
+#print IS_SERVER
 
 handler = get_logger_handler()
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+#logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 logger.addHandler(handler)
 
@@ -53,7 +65,9 @@ except:
 
 
 #web = HttpHelper(server_port=SERVER_PORT)
+#servidor nodejs
 web = UrlibHttpHelper(SERVER_IP, port=SERVER_PORT)
+#servidor django
 dweb = UrlibHttpHelper(DSERVER_IP, DSERVER_PORT)
 
 sysHelper = OSHelper()
@@ -78,18 +92,15 @@ def watch_file(fpath):
                     if not change_time:
                         shutil.copy(fpath, "/tmp/" + fname)
                         change_time = time.time()
-                        web.do_post(url="/file_change", data={'file': fname, 'ip': IP, 'pos': POS,
-                                'node': HOSTNAME, 'hora': time.strftime("%a, %d-%m-%Y %H:%M ")})
+                        #web.do_post(url="/file_change", data={'file': fpath, 'ip': IP, 'pos': POS,
+                        #        'node': HOSTNAME, 'hora': time.strftime("%a, %d-%m-%Y %H:%M ")})
 
                     """Si cambio el archivo definamos el tiempo y actulizamos la copia temporal"""
                     if not compare_files(fpath, "/tmp/" + fname):
                         shutil.copy(fpath, "/tmp/" + fname)
                         change_time = time.time()
-                        web.do_post(url="/file_change", data={'file': fname, 'ip': IP, 'pos': POS,
-                                'node': HOSTNAME, 'hora': time.strftime("%a, %d-%m-%Y %H:%M ")})
-
-
-
+                        #web.do_post(url="/file_change", data={'file': fname, 'ip': IP, 'pos': POS,
+                        #        'node': HOSTNAME, 'hora': time.strftime("%a, %d-%m-%Y %H:%M ")})
 
 
                     if change_time and (time.time() - change_time) > FILE_CHANGE_THRESHOLD:
@@ -100,14 +111,24 @@ def watch_file(fpath):
                         change_time = None
                         shutil.copy(fpath, mngfile)
                         os.remove("/tmp/" + fname)
-                        print "ARCHIVO ACTUALIZADO en MON"
+
+                        web.do_post(url="/file_change", data={'file': fpath, 'ip': IP, 'pos': POS,
+                                'node': HOSTNAME, 'hora': datetime.now()})
+
+                        notification = "El archivo " + fpath + " fue modificado el "+ time.strftime("%d-%m-%Y a las %H:%M")+" hora del host"
+
+                        dweb.do_post(url="/api/network/notification/", data={'description': notification, 'node': DB_ID})
+
 
             except OSError, oe:
-                logger.error("Problema con: " + oe.filename)
+                logger.error("Problema con: " + oe.filename, exc_info=True)
+            except Exception, e:
+                logger.error("Problema con archivo: ", exc_info=True)
             time.sleep(2)
     else:
         logger.warning(fpath + " no es un archivo valido, terminado hilo...")
         return
+    logger.info('Deteniendo Thread [watch_file] finished...')
 
 
 def format_resources():
@@ -115,8 +136,41 @@ def format_resources():
     lavg = sysHelper.get_cpu_load_avg()
     ram = sysHelper.get_ram_values()
     cpu = sysHelper.get_cpu_usage()
-
-
+    if IS_SERVER:
+        fans, temperature, power_suply, dimms, server_desc,raid = sysHelper.get_hp_health()
+        data['fans'] = fans
+        data['is_server'] = True
+        data['temperature'] = temperature
+        data['power_suply'] = power_suply
+        data['dimms'] = dimms
+        data['server_desc'] = server_desc
+        data['raid'] = raid
+        temp_stat,fans_stat,pwr_stat,dimm_stat,proc_stat,ld_stat,pd_stat = sysHelper.hp_health_values()
+        data['temp_stat'] = temp_stat
+        data['fans_stat'] = fans_stat
+        data['pwr_stat'] = pwr_stat
+        data['dimm_stat'] = dimm_stat
+        data['proc_stat'] = proc_stat
+        data['ld_stat'] = ld_stat
+        data['pd_stat'] = pd_stat
+    else:
+        screen = Popen(['nvidia-smi', '-q'], stdout=PIPE).communicate()[0].replace('\n','<br>')
+        data['screen'] = screen
+        gpu_temp = Popen("nvidia-smi -q -d TEMPERATURE | grep Gpu | awk '{print $3}'", stdin=PIPE, shell=True, stdout=PIPE).communicate()[0].rstrip('\n').rstrip('\r')
+        video_total = Popen("nvidia-smi -q -d MEMORY | grep Total | awk '{print $3}'", stdin=PIPE, shell=True, stdout=PIPE).communicate()[0].rstrip('\n').rstrip('\r')
+        video_used = Popen("nvidia-smi -q -d MEMORY | grep Used | awk '{print $3}'", stdin=PIPE, shell=True, stdout=PIPE).communicate()[0].rstrip('\n').rstrip('\r')
+        video_usage = (float(video_used)/float(video_total)) * 100.0
+        data['gpu_temp'] = gpu_temp
+        data['video_usage'] = video_usage
+    dmi = Popen(['dmidecode', '-t', '0,1'], stdout=PIPE).communicate()[0].replace('\n','<br>')
+    manufacturer = Popen("dmidecode -t 1 | grep Manufacturer | cut -d':' -f2",  stdin=PIPE, shell=True, stdout=PIPE).communicate()[0].rstrip('\n').rstrip('\r')
+    node_model = Popen("dmidecode -t 1  | grep Name | cut -d':' -f2",  stdin=PIPE, shell=True, stdout=PIPE).communicate()[0].rstrip('\n').rstrip('\r')
+    serial = Popen("dmidecode -t 1 | grep Serial | cut -d':' -f2",  stdin=PIPE, shell=True, stdout=PIPE).communicate()[0].rstrip('\n').rstrip('\r')
+    data['dmi'] = dmi
+    data['sector'] = SECTOR
+    data['manufacturer'] = manufacturer
+    data['node_model'] = node_model
+    data['serial'] = serial
     data['cores'] = lavg['cores']
     data['procs'] = lavg['procs']
     data['load15'] = lavg['load15']
@@ -127,8 +181,9 @@ def format_resources():
     data['cpu_pcpu'] = "%.2f" % cpu['pcpu']
     data['cpu_proc_name'] = cpu['proc_name']
     data['cpu_proc_pcpu'] = cpu['proc_pcpu']
-    dif = sysHelper.get_sync_state("10.160.80.205")
-    if dif:
+    dif = sysHelper.get_sync_state(NTP_SERVER)
+
+    if dif is not None:
         data['sync_dif'] = dif
     else:
         data['sync_dif'] = "---"
@@ -139,19 +194,54 @@ def format_resources():
     data['ip'] = IP
     return data
 
-def send_presence():
+def format_resources_for_node():
+    data2 = {}
+    lavg = sysHelper.get_cpu_load_avg()
+    ram = sysHelper.get_ram_values()
+    cpu = sysHelper.get_cpu_usage()
+    data2['cores'] = lavg['cores']
+    data2['procs'] = lavg['procs']
+    data2['load15'] = lavg['load15']
+    data2['load5'] = lavg['load5']
+    data2['ram_prc'] = ram[3]
+    data2['ram_top_proc'] = ram[4]
+    data2['ram_top_pmem'] = ram[5]
+    data2['cpu_pcpu'] = "%.2f" % cpu['pcpu']
+    data2['cpu_proc_name'] = cpu['proc_name']
+    data2['cpu_proc_pcpu'] = cpu['proc_pcpu']
+    dif = sysHelper.get_sync_state(NTP_SERVER)
+    if dif is not None:
+        data2['sync_dif'] = dif
+    else:
+        data2['sync_dif'] = "---"
+    data2['uptime_str'], data2['uptime_seg'] = sysHelper.get_sys_uptime()
+    data2['pos'] = POS
+    data2['node'] = HOSTNAME
+    data2['ip'] = IP
+    return data2
+
+def send_presence(_IP, _ID):
     time.sleep(1)
     while 1:
-        web.do_post(url="/presence", data={'ip': IP, 'id': DB_ID})
-        time.sleep(PRESENCE_PERIOD)
+        try:
+            web.do_post(url="/presence", data={'ip': _IP, 'id': _ID})
+            time.sleep(PRESENCE_PERIOD)
+        except:
+            pass
+    logger.info('Thread [send_presence] finished...')
 
-def resources_real_time():
+def resources_real_time(_ID):
     while 1:
-        data = format_resources()
-        data['id'] = DB_ID
-        web.do_post(data=data)
-        time.sleep(RSCR_COLLECT_PERIOD)
-
+        try:
+            #start_t = time.time()
+            data2 = format_resources_for_node()
+            data2['id'] = _ID
+            web.do_post(data=data2)
+            #print time.time() - start_t
+            time.sleep(RSCR_COLLECT_PERIOD)
+        except:
+            pass
+    logger.info('Thread [resources_real_time] finished...')
 
 
 def signal_handler(signal, frame):
@@ -161,48 +251,61 @@ signal.signal(signal.SIGINT, signal_handler)
 
 
 
-# Verificar si ya existe en la BD
-#gres = json.loads(dweb.do_get(url="/api/network/nodes/?ip=" + IP))
-gres = dweb.do_get(url="/api/network/nodes/?ip=" + IP)
-
-if len(gres) <= 2:
-    data = sysHelper.get_sys_info(ifname=IFACE)
-    r = dweb.do_post(url="/api/network/nodes/", data=data)
-    #DB_ID = int(json.loads(r.read())['id'])
-    DB_ID = int(r.read().split(',')[0].split(':')[1])
-else:
-    #DB_ID = int(gres[0]["id"])
-    DB_ID = int(gres.split(',')[0].split(':')[1])
-
-
-p = threading.Thread(target=send_presence)
-p.daemon = True
-p.start()
-
-r = threading.Thread(target=resources_real_time)
-r.daemon = True
-r.start()
-
-#fc = threading.Thread(target=watch_file, args=("/home/edx/heroku",))
-#fc.daemon = True
-#fc.start()
-
 from subprocess import Popen, PIPE
 
+def main():
+    # Verificar si ya existe en la BD
+    #gres = json.loads(dweb.do_get(url="/api/network/nodes/?ip=" + IP))
+    gres = None
+    while not gres:
+        try:
+            gres = dweb.do_get(url="/api/network/nodes/?ip=" + IP)
+            if len(gres) <= 2:
+                data = sysHelper.get_sys_info(ifname=IFACE)
+                r = dweb.do_post(url="/api/network/nodes/", data=data)
+                #DB_ID = int(json.loads(r.read())['id'])
+                DB_ID = int(r.read().split(',')[0].split(':')[1])
+            else:
+                #DB_ID = int(gres[0]["id"])
+                DB_ID = int(gres.split(',')[0].split(':')[1])
+        except:
+            logger.warning("No se pudo conectar al servidor web "+ DSERVER_IP +":"+ DSERVER_PORT + "... reintentando en 10 segundos.")
+            time.sleep(10)
+            #sys.exit()
+    p = threading.Thread(target=send_presence, args=(IP, DB_ID))
+    #p.daemon = True
+    p.setDaemon(True)
+    p.start()
 
+    r = threading.Thread(target=resources_real_time, args=(DB_ID,))
+    #r.daemon = True
+    r.setDaemon(True)
+    r.start()
 
-while True:
-    start_time = time.time()
-    # Ciclo para guardar historial de recursos
-    data = format_resources()
-    try:
-        dweb.do_put(url="/api/network/nodes/" + str(DB_ID) + "/", data=data)
-    except Exception, e:
-        logger.error("No se envio actualizacion a nodo")
-    data['node'] = DB_ID
-    dweb.do_post(url="/api/network/performance_hist/", data=data)
-    # print get_uptime()
-    # web.http_post(data=data)
+    fc = threading.Thread(target=watch_file, args=("/etc/hosts",))
+    #fc.daemon = True
+    fc.setDaemon(True)
+    fc.start()
 
-    #print("- %s seconds " % "{0:.3f} %".format((time.time() - start_time)))
-    time.sleep(RSCR_HIST_PERIOD)
+    while True:
+        try:
+            start_time = time.time()
+            # Ciclo para guardar historial de recursos
+            data = format_resources()
+            try:
+                dweb.do_put(url="/api/network/nodes/" + str(DB_ID) + "/", data=data)
+            except Exception, e:
+                logger.error("No se envio actualizacion a nodo")
+            data['node'] = DB_ID
+            dweb.do_post(url="/api/network/performance_hist/", data=data)
+            # print get_uptime()
+            # web.http_post(data=data)
+
+            #print("- %s seconds " % "{0:.3f} %".format((time.time() - start_time)))
+            time.sleep(RSCR_HIST_PERIOD)
+        except:
+            pass
+    print "FIN DE MAIN"
+
+if __name__ == "__main__":
+    main()

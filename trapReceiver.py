@@ -1,4 +1,5 @@
 #!/usr/bin/python
+import json
 import logging
 import os
 
@@ -14,6 +15,8 @@ from utils.snmp_requests import get_request
 from utils.web_methods import HttpHelper
 #from config import CONFIG
 import ConfigParser
+from helpers.web_helper import UrlibHttpHelper
+import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, 'config.ini')
@@ -23,6 +26,13 @@ config.readfp(open(CONFIG_FILE))
 
 SERVER_IP = config.get('NODEJS_SERVER', 'ip')
 SERVER_PORT = config.get('NODEJS_SERVER', 'port')
+
+DSERVER_IP = config.get('NGINX_SERVER', 'ip')
+DSERVER_PORT = config.get('NGINX_SERVER', 'port')
+
+DB_ID = 0
+#servidor django
+dweb = UrlibHttpHelper(DSERVER_IP, DSERVER_PORT)
 
 handler = get_logger_handler()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -72,17 +82,37 @@ def cbFun(transportDispatcher, transportDomain, transportAddress, wholeMsg):
             uptime = int(varBinds[0][1].getComponent(True).prettyPrint()) / 100
             notify_type = get_OID_Name(varBinds[1][1].getComponent(True).prettyPrint())
             notify_msg['direccion'] = transportAddress[0]
+            # Verificar si ya existe en la BD
+            gres = json.loads(dweb.do_get(url="/api/network/nodes/?ip=" + transportAddress[0]))
+            print gres[0]["pos"]
+            #gres = dweb.do_get(url="/api/network/nodes/?ip=" + transportAddress[0])
+            if len(gres)>0:
+                DB_ID = gres[0]["id"]
+            #else:
+                # DB_ID = int(gres[0]["id"])
+                #DB_ID = int(gres.split(',')[0].split(':')[1])
             #notify_msg['uptime'] = uptime
             #notify_msg['tipo'] = notify_type
             if notify_type == "nsNotifyShutdown":
                 print("NOTIFICAR DE APAGADO")
                 #http_post(notify_msg, "/gestion/boot_event/agregar/")
-                cli.http_post(url="/shutdown", data=notify_msg)
+                notification = transportAddress[0] + " ("+ gres[0]["pos"]+") se ha apago el " + time.strftime(
+                    "%d-%m-%Y a las %H:%M")
+                notification2 = transportAddress[0] + " (" + gres[0]["pos"] + ") se esta apagando"
+
+                dweb.do_post(url="/api/network/notification/", data={'description': notification, 'node': DB_ID})
+                cli.http_post(url="/shutdown", data={'description': notification2, 'node': DB_ID})
+
                 #print (notify_msg)
             elif notify_type == "coldStart":
                 print("NOTIFICAR DE ARRANQUE")
                 #http_post(notify_msg, "/gestion/boot_event/agregar/")
-                cli.http_post(url="/startup", data=notify_msg)
+                notification = transportAddress[0] + " (" + gres[0]["pos"] + ") se encedio el " + time.strftime(
+                    "%d-%m-%Y a las %H:%M")
+                notification2 = transportAddress[0] + " (" + gres[0]["pos"] + ") esta iniciando"
+
+                dweb.do_post(url="/api/network/notification/", data={'description': notification, 'node': DB_ID})
+                cli.http_post(url="/startup", data={'description': notification2, 'node': DB_ID})
                 #print (notify_msg)
             elif notify_type == "linkUp":
                 #6 varBinds pos 3,4,5 = interfaceIndex, adminStatus, operstatus

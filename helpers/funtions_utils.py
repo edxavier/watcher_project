@@ -1,5 +1,6 @@
 import filecmp
 import logging
+from logging.handlers import TimedRotatingFileHandler
 #import hashlib
 import os
 import socket
@@ -26,8 +27,16 @@ def clear_multiple_spaces(text=""):
 def get_logger_handler():
     # logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    logs_file = os.path.join(BASE_DIR, 'logs.txt')
-    handler = logging.FileHandler(logs_file)
+    LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+    try:
+        os.stat(LOGS_DIR)
+    except:
+        # crear el directorio
+        os.mkdir(LOGS_DIR)
+
+    log_file = os.path.join(LOGS_DIR, 'error.log')
+    #handler = logging.FileHandler(logs_file)
+    handler = TimedRotatingFileHandler(log_file, when='midnight', backupCount=7)
     handler.setLevel(logging.INFO)
 
     # create a logging format
