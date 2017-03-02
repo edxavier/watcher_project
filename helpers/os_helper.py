@@ -208,7 +208,7 @@ class OSHelper(object):
 
         proc_total = Popen("hpasmcli -s 'show server' | grep -c Status", stdin=PIPE, shell=True, stdout=PIPE).communicate()[0].rstrip('\n').rstrip('\r')
         proc_normal = Popen("hpasmcli -s 'show server' | grep Status | grep -c Ok", stdin=PIPE, shell=True, stdout=PIPE).communicate()[0].rstrip('\n').rstrip('\r')
-        if int(dimm_total) > int(dimm_normal):
+        if int(proc_total) > int(proc_normal):
             proc_stat = "F"
         else:
             proc_stat = "OK"
